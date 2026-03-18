@@ -133,6 +133,41 @@
     }
     .cache-badge.hit { background: #e8f5e9; color: #2e7d32; }
     .cache-badge.miss { background: #fff3e0; color: #e65100; }
+
+    /* 벤치마크 대시보드 스타일 */
+    .dashboard-section {
+      margin-bottom: 20px; padding-bottom: 16px;
+      border-bottom: 1px solid #eee;
+    }
+    .dashboard-section:last-child { border-bottom: none; }
+    .dashboard-section h3 {
+      font-size: 13px; color: #888; margin-bottom: 8px; font-weight: 600;
+    }
+    .bar-chart-row {
+      display: flex; align-items: center; margin-bottom: 6px; font-size: 13px;
+    }
+    .bar-chart-label {
+      width: 90px; flex-shrink: 0; color: #555; font-size: 12px;
+    }
+    .bar-chart-bar {
+      height: 20px; border-radius: 3px; min-width: 2px;
+      transition: width 0.5s ease;
+    }
+    .bar-chart-value {
+      margin-left: 8px; font-size: 12px; color: #888; white-space: nowrap;
+    }
+    .benchmark-controls select, .benchmark-controls input {
+      padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;
+      font-size: 13px;
+    }
+    .benchmark-controls button {
+      padding: 6px 14px; border: none; border-radius: 4px;
+      background: #0052A4; color: white; font-size: 13px;
+      cursor: pointer; font-weight: 600; margin-top: 8px; width: 100%;
+    }
+    .benchmark-controls button:hover { background: #003d7a; }
+    .stat-value { font-size: 20px; font-weight: 700; color: #333; }
+    .stat-label { font-size: 12px; color: #999; }
   </style>
 </head>
 <body>
@@ -171,12 +206,102 @@
     </div>
   </div>
 
-  <!-- 오른쪽 패널: 성능 대시보드 (30%) — 11번 프롬프트에서 채울 예정 -->
+  <!-- 오른쪽 패널: 성능 대시보드 (30%) -->
   <div class="right-panel">
-    <h2>성능 대시보드</h2>
-    <div id="dashboard-content">
-      <p>캐시 히트/미스 로그가 여기에 표시됩니다.</p>
-      <div id="cache-log" style="margin-top: 12px;"></div>
+    <h2>📊 성능 대시보드</h2>
+
+    <!-- 마지막 요청 정보 -->
+    <div class="dashboard-section">
+      <h3>마지막 요청</h3>
+      <div id="last-request-info">
+        <p style="color:#999;font-size:13px;">아직 요청 없음</p>
+      </div>
+    </div>
+
+    <!-- 응답 시간 비교 바 차트 -->
+    <div class="dashboard-section">
+      <h3>응답 시간 비교</h3>
+      <div id="response-time-chart">
+        <div class="bar-chart-row">
+          <span class="bar-chart-label">DB 직접 조회</span>
+          <div class="bar-chart-bar" id="bar-db" style="width:0;background:#ef5350;"></div>
+          <span class="bar-chart-value" id="bar-db-val">- ms</span>
+        </div>
+        <div class="bar-chart-row">
+          <span class="bar-chart-label">Mini Redis</span>
+          <div class="bar-chart-bar" id="bar-mini" style="width:0;background:#42a5f5;"></div>
+          <span class="bar-chart-value" id="bar-mini-val">- ms</span>
+        </div>
+        <div class="bar-chart-row">
+          <span class="bar-chart-label">실제 Redis</span>
+          <div class="bar-chart-bar" id="bar-real" style="width:0;background:#66bb6a;"></div>
+          <span class="bar-chart-value" id="bar-real-val">- ms</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cache Hit/Miss 현황 -->
+    <div class="dashboard-section">
+      <h3>Cache Hit/Miss 현황</h3>
+      <div id="hit-miss-stats">
+        <div class="bar-chart-row">
+          <span class="bar-chart-label">HIT</span>
+          <div class="bar-chart-bar" id="bar-hit" style="width:0;background:#4caf50;"></div>
+          <span class="bar-chart-value" id="bar-hit-val">0회</span>
+        </div>
+        <div class="bar-chart-row">
+          <span class="bar-chart-label">MISS</span>
+          <div class="bar-chart-bar" id="bar-miss" style="width:0;background:#ff9800;"></div>
+          <span class="bar-chart-value" id="bar-miss-val">0회</span>
+        </div>
+        <div style="font-size:13px;color:#555;margin-top:4px;">
+          적중률: <strong id="hit-rate">0%</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- 벤치마크 실행 -->
+    <div class="dashboard-section">
+      <h3>벤치마크 실행</h3>
+      <div class="benchmark-controls">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+          <label style="font-size:13px;">노선:</label>
+          <select id="benchmarkFrom">
+            <option value="서울">서울</option>
+            <option value="부산">부산</option>
+            <option value="대전">대전</option>
+            <option value="대구">대구</option>
+          </select>
+          <span style="font-size:13px;">→</span>
+          <select id="benchmarkTo">
+            <option value="부산">부산</option>
+            <option value="서울">서울</option>
+            <option value="대전">대전</option>
+            <option value="대구">대구</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+          <label style="font-size:13px;">반복:</label>
+          <input type="number" id="benchmarkN" value="10" min="1" max="1000" style="width:60px;">
+          <span style="font-size:13px;">회</span>
+        </div>
+        <button onclick="runBenchmark()">벤치마크 시작</button>
+      </div>
+      <div id="benchmark-result" style="margin-top:8px;"></div>
+    </div>
+
+    <!-- 캐시 로그 -->
+    <div class="dashboard-section">
+      <h3>캐시 로그</h3>
+      <div id="cache-log" style="max-height:150px;overflow-y:auto;"></div>
+    </div>
+
+    <!-- 동시 요청 결과 -->
+    <div class="dashboard-section">
+      <h3>동시 요청 결과</h3>
+      <div id="concurrent-dashboard" style="font-size:13px;color:#999;">
+        (동시 예약 시도 결과가 여기 표시됨)
+      </div>
     </div>
   </div>
 </div>
@@ -209,6 +334,15 @@ const API = "http://localhost:8000";
 // 현재 선택된 열차 정보를 저장하는 변수야.
 // 좌석 화면에서 어떤 열차의 좌석을 보고 있는지 기억해둬야 하니까 필요해.
 let selectedTrain = null;
+
+// 캐시 히트/미스 횟수를 세는 카운터야.
+// 대시보드에서 적중률을 계산할 때 사용해.
+let hitCount = 0;
+let missCount = 0;
+
+// 마지막 검색 결과를 저장하는 변수야.
+// showSeats에서 열차 정보를 찾을 때 사용해.
+let lastTrainResults = [];
 
 
 // ──────────────────────────────────────────────
@@ -335,65 +469,46 @@ async function refreshSeats() {
 // ──────────────────────────────────────────────
 
 async function searchTrains() {
-  // 출발지와 도착지에 맞는 열차 목록을 가져오는 함수야.
-  // Cache Aside 패턴을 적용해서:
-  // 1. 먼저 Mini Redis 캐시를 확인하고
-  // 2. 캐시에 없으면 목업 데이터에서 가져온 뒤 캐시에 저장해.
-  // 이렇게 하면 같은 노선을 반복 조회할 때 훨씬 빨라져.
+  // 출발지와 도착지에 맞는 열차 목록을 API에서 가져오는 함수야.
+  // /trains/cached 엔드포인트를 써서 Cache Aside 패턴을 적용해.
+  // 캐시에 있으면 바로 반환(HIT), 없으면 DB에서 가져와서 캐시에 저장(MISS).
   const from = document.getElementById("from-select").value;
   const to = document.getElementById("to-select").value;
 
-  // FIX 1: 출발지와 도착지가 같으면 조회하지 않고 알림을 보여줘.
+  // 출발지와 도착지가 같으면 조회하지 않고 알림을 보여줘.
   if (from === to) {
     showToast("출발지와 도착지가 같습니다");
     return;
   }
 
-  const cacheKey = `trains:${from}:${to}`;
   const statusEl = document.getElementById("cache-status");
 
-  let trains;
-  let cacheHit = false;
-
   try {
-    // 1단계: 캐시 먼저 확인
-    const cached = await fetch(`${API}/get/${cacheKey}`);
-    if (cached.ok) {
-      // 캐시 히트! 저장해둔 데이터를 바로 사용한다.
-      const data = await cached.json();
-      trains = JSON.parse(data.value);
-      cacheHit = true;
-      addCacheLog("HIT", cacheKey);
-    }
+    // /trains/cached API를 호출해서 열차 목록을 가져와.
+    // 서버에서 캐시 히트/미스를 판단하고 결과를 알려줘.
+    const res = await fetch(
+      `${API}/trains/cached?from_station=${encodeURIComponent(from)}&to_station=${encodeURIComponent(to)}`
+    );
+    const data = await res.json();
+
+    // 캐시 히트/미스 정보를 대시보드에 전달해.
+    const isHit = data.source === 'cache_hit';
+    updateDashboard({
+      type: isHit ? 'HIT' : 'MISS',
+      responseTime: data.elapsed_ms,
+      key: `trains:${from}:${to}`
+    });
+
+    // 캐시 상태 배지 표시
+    statusEl.innerHTML = isHit
+      ? '<span class="cache-badge hit">Cache HIT</span>'
+      : '<span class="cache-badge miss">Cache MISS</span>';
+
+    // 열차 목록 화면 렌더링
+    renderTrainList(data.trains, from, to);
   } catch (e) {
-    // 서버 연결 실패 시 무시하고 캐시 미스로 처리
+    showToast("서버 연결에 실패했습니다");
   }
-
-  if (!cacheHit) {
-    // 2단계: 캐시 미스 -> 목업 데이터에서 필터링 (외부 API 호출 시뮬레이션)
-    await delay(500); // 외부 API 호출 지연 시뮬레이션 (500ms)
-    trains = TRAINS.filter(t => t.from === from && t.to === to);
-
-    // 3단계: 결과를 캐시에 저장 (TTL 60초)
-    try {
-      await fetch(`${API}/set`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: cacheKey, value: JSON.stringify(trains), ttl: 60 }),
-      });
-    } catch (e) {
-      // 캐시 저장 실패해도 결과는 보여줘야 하니까 무시
-    }
-    addCacheLog("MISS", cacheKey);
-  }
-
-  // 캐시 상태 배지 표시
-  statusEl.innerHTML = cacheHit
-    ? '<span class="cache-badge hit">Cache HIT</span>'
-    : '<span class="cache-badge miss">Cache MISS</span>';
-
-  // 열차 목록 화면 렌더링
-  renderTrainList(trains, from, to);
 }
 
 
@@ -404,6 +519,8 @@ async function searchTrains() {
 function renderTrainList(trains, from, to) {
   // 검색 결과로 나온 열차들을 카드 형태로 화면에 보여주는 함수야.
   // 각 카드를 클릭하면 해당 열차의 좌석 선택 화면으로 이동해.
+  // 결과를 저장해서 좌석 화면에서 열차 정보를 참조할 수 있게 해.
+  lastTrainResults = trains || [];
   const content = document.getElementById("main-content");
 
   if (!trains || trains.length === 0) {
@@ -441,7 +558,8 @@ function renderTrainList(trains, from, to) {
 async function showSeats(trainId) {
   // 특정 열차의 좌석 현황을 Mini Redis에서 조회해서 보여주는 함수야.
   // 각 좌석이 예약 가능한지 아닌지를 서버에 물어보고 화면에 표시해.
-  const train = TRAINS.find(t => t.id === trainId);
+  // TRAINS 목업 배열이나 마지막 검색 결과에서 열차 정보를 찾아.
+  const train = TRAINS.find(t => t.id === trainId) || lastTrainResults.find(t => t.id === trainId);
   if (!train) return;
 
   // 현재 선택된 열차를 기억해둔다 (refreshSeats에서 사용)
@@ -615,9 +733,140 @@ async function concurrentReserve(trainId) {
     </div>
   `;
 
+  // 동시 요청 결과를 오른쪽 대시보드에도 표시해
+  const concDash = document.getElementById('concurrent-dashboard');
+  concDash.innerHTML = `
+    <div style="font-size:13px;">
+      <strong>${count}명 동시 시도</strong> (${totalTime}ms)
+      <div style="color:#2e7d32;">성공: ${successCount}명</div>
+      <div style="color:#c62828;">실패: ${failCount}명</div>
+      ${successUser ? `<div>최종 예약자: user-${successUser.userId}</div>` : ''}
+    </div>
+  `;
+
   // 좌석 상태만 새로고침 (결과창 유지)
   await refreshSeats();
 }
+
+// ──────────────────────────────────────────────
+// 대시보드 업데이트
+// ──────────────────────────────────────────────
+
+function updateDashboard(info) {
+  // 오른쪽 대시보드의 '마지막 요청' 정보를 업데이트하는 함수야.
+  // 캐시 히트/미스 여부와 응답 시간을 보여줘.
+  // info 객체: { type: 'HIT' 또는 'MISS', responseTime: 숫자, key: 캐시키 }
+
+  // 히트/미스 카운터 업데이트
+  if (info.type === 'HIT') {
+    hitCount++;
+  } else {
+    missCount++;
+  }
+
+  // 마지막 요청 정보 표시
+  const lastReqEl = document.getElementById('last-request-info');
+  const isHit = info.type === 'HIT';
+  lastReqEl.innerHTML = `
+    <div style="font-size:14px;margin-bottom:4px;">
+      출처: <strong style="color:${isHit ? '#2e7d32' : '#e65100'}">
+        Cache ${info.type} ${isHit ? '✅' : '⚠️'}
+      </strong>
+    </div>
+    <div style="font-size:14px;">응답 시간: <strong>${info.responseTime} ms</strong></div>
+  `;
+
+  // 캐시 로그 추가
+  addCacheLog(info.type, info.key);
+
+  // Hit/Miss 바 차트 업데이트
+  updateHitMissChart();
+}
+
+function updateHitMissChart() {
+  // 히트/미스 바 차트와 적중률을 업데이트하는 함수야.
+  // 히트와 미스 횟수에 따라 바 길이를 조절해.
+  const total = hitCount + missCount;
+  const maxCount = Math.max(hitCount, missCount, 1);
+
+  const barHit = document.getElementById('bar-hit');
+  const barMiss = document.getElementById('bar-miss');
+  barHit.style.width = (hitCount / maxCount * 100) + 'px';
+  barMiss.style.width = (missCount / maxCount * 100) + 'px';
+  document.getElementById('bar-hit-val').textContent = hitCount + '회';
+  document.getElementById('bar-miss-val').textContent = missCount + '회';
+
+  // 적중률 계산
+  const rate = total > 0 ? Math.round(hitCount / total * 100) : 0;
+  document.getElementById('hit-rate').textContent = rate + '%';
+}
+
+
+// ──────────────────────────────────────────────
+// 벤치마크 실행
+// ──────────────────────────────────────────────
+
+async function runBenchmark() {
+  // /benchmark/trains API를 호출해서 성능 비교 결과를 받아오는 함수야.
+  // DB 직접 조회와 Mini Redis 캐시의 속도 차이를 바 차트로 보여줘.
+  const n = document.getElementById('benchmarkN').value;
+  const from = document.getElementById('benchmarkFrom').value;
+  const to = document.getElementById('benchmarkTo').value;
+
+  const resultDiv = document.getElementById('benchmark-result');
+  resultDiv.innerHTML = '<p style="color:#999;font-size:13px;">벤치마크 실행 중...</p>';
+
+  try {
+    const res = await fetch(
+      `${API}/benchmark/trains?n=${n}&from_station=${encodeURIComponent(from)}&to_station=${encodeURIComponent(to)}`
+    );
+    const data = await res.json();
+    updateBenchmarkChart(data);
+  } catch (e) {
+    resultDiv.innerHTML = '<p style="color:#c62828;font-size:13px;">벤치마크 실행 실패</p>';
+  }
+}
+
+function updateBenchmarkChart(data) {
+  // 벤치마크 결과를 바 차트로 표시하는 함수야.
+  // DB 조회 시간과 Mini Redis 시간을 비교해서 바 길이를 퍼센트로 계산해.
+  // CSS width로 구현하니까 Canvas 같은 건 필요 없어.
+  const max = Math.max(data.db_only_ms, data.mini_redis_ms, 1);
+
+  // 응답 시간 비교 바 차트 업데이트
+  const barDb = document.getElementById('bar-db');
+  const barMini = document.getElementById('bar-mini');
+  const barReal = document.getElementById('bar-real');
+
+  barDb.style.width = Math.max((data.db_only_ms / max * 150), 2) + 'px';
+  barMini.style.width = Math.max((data.mini_redis_ms / max * 150), 2) + 'px';
+
+  document.getElementById('bar-db-val').textContent = data.db_only_ms + ' ms';
+  document.getElementById('bar-mini-val').textContent = data.mini_redis_ms + ' ms';
+
+  // 실제 Redis는 13번에서 채움
+  if (data.real_redis_ms !== null) {
+    barReal.style.width = Math.max((data.real_redis_ms / max * 150), 2) + 'px';
+    document.getElementById('bar-real-val').textContent = data.real_redis_ms + ' ms';
+  } else {
+    barReal.style.width = '0px';
+    document.getElementById('bar-real-val').textContent = '- ms (13번에서 추가)';
+  }
+
+  // 벤치마크 결과 요약
+  const resultDiv = document.getElementById('benchmark-result');
+  resultDiv.innerHTML = `
+    <div style="font-size:13px;color:#555;">
+      <div>반복 횟수: <strong>${data.iterations}회</strong></div>
+      <div>DB 직접: <strong>${data.db_only_ms}ms</strong></div>
+      <div>Mini Redis: <strong>${data.mini_redis_ms}ms</strong></div>
+      <div style="margin-top:4px;color:#0052A4;font-weight:700;">
+        속도 향상: ${data.speedup}배 빠름
+      </div>
+    </div>
+  `;
+}
+
 
 // 페이지 로드 시 드롭다운 초기 상태 설정
 updateDestOptions();
