@@ -62,6 +62,29 @@ async def set_if_not_exists(request: SetNxRequest):
     return SetNxResponse(success=False, message="이미 예약된 좌석입니다")
 
 
+@router.post("/hold")
+async def hold_seat(request: SetNxRequest):
+    """
+    좌석을 5초간 임시 선점하는 엔드포인트야.
+    setnx로 이미 선점된 좌석이면 실패해.
+    TTL이 지나면 자동으로 해제돼서 다른 사람이 선점할 수 있어.
+    """
+    success = store.set_nx(request.key, "hold", request.ttl or 5)
+    if success:
+        return {"success": True, "message": "임시 선점 성공", "ttl": request.ttl or 5}
+    return {"success": False, "message": "이미 선점된 좌석입니다"}
+
+
+@router.post("/confirm")
+async def confirm_seat(request: SetRequest):
+    """
+    임시 선점된 좌석을 정식 예약으로 확정하는 엔드포인트야.
+    기존 hold 상태를 reserved로 바꾸고 TTL을 300초로 연장해.
+    """
+    store.set(request.key, "reserved", ttl=300)
+    return {"success": True, "message": "예약 확정 완료"}
+
+
 @router.get("/get/{key}", response_model=ValueResponse)
 async def get_value(key: str):
     # 키에 해당하는 값을 조회하는 엔드포인트야.
