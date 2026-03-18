@@ -28,7 +28,6 @@ Cache        직접 구현한 Mini Redis (HashTable)
 Real Redis   Docker Redis (성능 비교용)
 Test         pytest (43개 전체 통과)
 Frontend     Vanilla HTML/JS (단일 파일)
-Tunnel       Cloudflare Tunnel (외부 접속)
 ```
 
 ---
@@ -127,9 +126,6 @@ pip install -r requirements.txt
 
 # 서버 실행
 uvicorn app.main:app --reload
-
-# 외부 접속 (Cloudflare Tunnel)
-cloudflared tunnel --url http://localhost:8000
 
 # Docker Redis (비교용)
 docker run -d --name redis-test -p 6379:6379 redis:latest
