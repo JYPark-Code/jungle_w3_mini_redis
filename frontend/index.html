@@ -497,33 +497,27 @@ async function showSeats(trainId) {
 
 async function reserveSeat(trainId, seat) {
   // 선택한 좌석을 Mini Redis에 예약하는 함수야.
-  // 1. 먼저 좌석이 이미 예약되었는지 확인하고
-  // 2. 비어있으면 예약을 저장해 (TTL 300초 = 5분 동안 유효)
-  // 3. 좌석 상태만 새로고침해서 화면을 업데이트해.
-  const key = `seat:${trainId}:${seat}`;
-
-  // 1. 먼저 예약 여부 확인 (isSeatReserved로 404 에러 방지)
-  const reserved = await isSeatReserved(trainId, seat);
-  if (reserved) {
-    showToast("이미 예약된 좌석입니다");
-    return;
-  }
-
-  // 2. 예약 가능하면 저장 (TTL 300초)
+  // /setnx를 사용해서 키가 없을 때만 저장해.
+  // 이미 예약된 좌석이면 서버가 success: false를 돌려줘서 중복 예약을 막아.
+  // 기존 /set은 항상 덮어쓰지만, /setnx는 "먼저 온 1명만 성공"이야.
   try {
-    const res = await fetch(`${API}/set`, {
+    const res = await fetch(`${API}/setnx`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: "reserved", ttl: 300 }),
+      body: JSON.stringify({
+        key: `seat:${trainId}:${seat}`,
+        value: "reserved",
+        ttl: 300,
+      }),
     });
+    const data = await res.json();
 
-    if (res.ok) {
-      showToast(`${seat} 좌석 예약 완료!`);
-      // 좌석 상태만 새로고침 (전체 화면을 다시 그리지 않음)
-      await refreshSeats();
+    if (data.success) {
+      showToast(`${seat} 예약 완료!`);
     } else {
-      showToast("예약에 실패했습니다");
+      showToast("이미 예약된 좌석입니다");
     }
+    await refreshSeats();
   } catch (e) {
     showToast("서버 연결에 실패했습니다");
   }
@@ -536,11 +530,11 @@ async function reserveSeat(trainId, seat) {
 
 async function concurrentReserve(trainId) {
   // 같은 좌석(A1)을 여러 명이 동시에 예약 시도하는 시뮬레이션이야.
-  // fetch 요청을 N개 동시에 날리고 결과를 모아서 보여줘.
-  // threading.Lock 덕분에 실제로 예약에 성공하는 사람은 1명뿐이야.
+  // /setnx를 사용해서 "먼저 온 1명만 성공"하는 걸 보여줘.
+  // 각 요청의 응답 시간도 기록해서, Lock이 순차 처리하는 걸 확인할 수 있어.
   const count = parseInt(document.getElementById("concurrent-count").value) || 5;
   const resultDiv = document.getElementById("concurrent-result");
-  const seat = "A1"; // 테스트용으로 A1 좌석 사용
+  const seat = "A1";
   const key = `seat:${trainId}:${seat}`;
 
   // 먼저 해당 좌석 예약을 초기화 (테스트를 위해)
@@ -550,46 +544,58 @@ async function concurrentReserve(trainId) {
 
   resultDiv.innerHTML = '<p style="color:#999">시뮬레이션 실행 중...</p>';
 
-  // N명이 동시에 같은 좌석을 예약 시도
-  // Promise.all로 모든 요청을 동시에 보낸다.
-  const promises = Array.from({ length: count }, (_, i) =>
-    fetch(`${API}/set`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: `user-${i + 1}`, ttl: 300 }),
+  // N명이 동시에 같은 좌석에 /setnx 요청
+  // Promise.all로 모든 요청을 동시에 보내고, 각 요청의 응답 시간도 측정해.
+  const startTime = Date.now();
+
+  const results = await Promise.all(
+    Array.from({ length: count }, async (_, i) => {
+      const reqStart = Date.now();
+      try {
+        const res = await fetch(`${API}/setnx`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, value: `user-${i + 1}`, ttl: 300 }),
+        });
+        const data = await res.json();
+        const reqEnd = Date.now();
+        return {
+          userId: i + 1,
+          success: data.success,
+          message: data.message,
+          responseTime: reqEnd - reqStart,
+        };
+      } catch (e) {
+        return { userId: i + 1, success: false, message: "서버 오류", responseTime: 0 };
+      }
     })
-      .then(res => ({ user: i + 1, ok: res.ok }))
-      .catch(() => ({ user: i + 1, ok: false }))
   );
 
-  const results = await Promise.all(promises);
-
-  // 실제로 누가 예약했는지 확인
-  let winner = null;
-  try {
-    const check = await fetch(`${API}/get/${key}`);
-    if (check.ok) {
-      const data = await check.json();
-      winner = data.value;
-    }
-  } catch (e) {}
+  const totalTime = Date.now() - startTime;
+  const successCount = results.filter(r => r.success).length;
+  const failCount = results.filter(r => !r.success).length;
+  const successUser = results.find(r => r.success);
 
   // 결과 표시
-  let html = `<div class="result-log"><strong>동시 예약 결과 (${count}명 시도, 좌석 ${seat}):</strong><br><br>`;
-  results.forEach(r => {
-    const isWinner = winner === `user-${r.user}`;
-    if (isWinner) {
-      html += `<div class="success">O 사용자 ${r.user} - 예약 성공 (최종 저장)</div>`;
-    } else {
-      html += `<div class="fail">X 사용자 ${r.user} - 덮어쓰기됨</div>`;
-    }
-  });
-  html += `<br><div style="color:#555">최종 예약자: <strong>${winner || "없음"}</strong></div>`;
-  html += '</div>';
+  resultDiv.innerHTML = `
+    <div class="result-log">
+      <strong>동시 예약 결과 (${count}명이 A1 좌석에 동시 시도)</strong>
+      <p style="color:#888;margin:4px 0">총 소요 시간: ${totalTime}ms</p>
+      <br>
+      ${results.map(r => `
+        <div style="padding:4px 0; color: ${r.success ? '#2e7d32' : '#c62828'}">
+          ${r.success ? 'O' : 'X'} 사용자 ${r.userId} - ${r.message}
+          <span style="color:#888; font-size:0.85em">(${r.responseTime}ms)</span>
+        </div>
+      `).join('')}
+      <div style="margin-top:8px; padding:8px; background:#e8f5e9; border-radius:4px">
+        Lock 동작 확인: 성공 ${successCount}명 / 실패 ${failCount}명
+        ${successUser ? ` - 최종 예약자: user-${successUser.userId}` : ''}
+      </div>
+    </div>
+  `;
 
-  resultDiv.innerHTML = html;
-
-  // 좌석 상태만 새로고침 (결과창이 사라지지 않도록 showSeats 대신 refreshSeats 사용)
+  // 좌석 상태만 새로고침 (결과창 유지)
   await refreshSeats();
 }
 
