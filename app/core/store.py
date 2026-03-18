@@ -304,6 +304,37 @@ class MiniRedis:
 
         return valid_keys
 
+    def set_nx(self, key: str, value: str, ttl: int | None = None) -> bool:
+        """
+        키가 없을 때만 저장하는 함수야. (Set if Not eXists)
+        Redis의 SETNX 명령어와 동일한 동작이야.
+
+        좌석 예약처럼 딱 1명만 성공해야 할 때 사용해.
+        - 키가 이미 있으면 → 저장하지 않고 False 반환 (예약 실패)
+        - 키가 없으면 → 저장하고 True 반환 (예약 성공)
+
+        Lock으로 전체를 감싸서, 동시에 여러 명이 시도해도
+        '확인 + 저장'이 원자적으로(한 덩어리로) 실행돼.
+        기존 set()은 항상 덮어쓰지만, set_nx()는 이미 있으면 거부해.
+        """
+        with self.lock:
+            # 만료된 키인지 먼저 확인해서 정리한다.
+            # 만료된 키가 남아있으면 '이미 예약됨'으로 잘못 판단할 수 있으니까.
+            exp = self.expire_at.get(key)
+            if exp is not None and time() > exp:
+                self.hash_table.delete(key)
+                self.expire_at.delete(key)
+
+            # 이미 키가 있으면 저장하지 않고 실패 반환
+            if self.hash_table.exists(key):
+                return False
+
+            # 키가 없으면 저장 성공
+            self.hash_table.set(key, value)
+            if ttl is not None:
+                self.expire_at.set(key, time() + ttl)
+            return True
+
     def flush(self) -> None:
         """
         모든 데이터를 삭제한다.
