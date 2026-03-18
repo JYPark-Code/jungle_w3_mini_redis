@@ -218,33 +218,47 @@ async def get_trains_cached(from_station: str, to_station: str):
 
 
 @router.get("/benchmark/trains")
-async def benchmark_trains(n: int = 10, from_station: str = "서울", to_station: str = "부산"):
+async def benchmark_trains(n: int = 100, from_station: str = "서울", to_station: str = "부산"):
     """
     DB 직접 조회 vs Mini Redis 캐시 성능을 비교하는 엔드포인트야.
-    n번 반복해서 각각의 총 시간을 측정하고 결과를 돌려줘.
-    캐시가 얼마나 빠른지 숫자로 확인할 수 있어.
+    n번 반복해서 각각 총 시간을 측정해.
     """
-    # 1. 캐시 없이 DB에서 n번 직접 조회
-    db_start = time()
-    for _ in range(n):
-        get_trains_from_db(from_station, to_station)
-    db_elapsed = int((time() - db_start) * 1000)
+    import time as time_module
 
-    # 2. Mini Redis 캐시로 n번 조회 (첫 번째는 MISS, 나머지는 HIT)
     cache_key = f"trains:{from_station}:{to_station}"
-    store.delete(cache_key)  # 캐시 초기화해서 공정한 테스트
-    cache_start = time()
+
+    # === 1. DB 직접 조회 n번 측정 ===
+    # 매번 DB에서 읽어오는 시간을 측정해. 캐시를 전혀 사용하지 않아.
+    db_start = time_module.time()
     for _ in range(n):
-        cached = store.get(cache_key)
-        if not cached:
+        _ = get_trains_from_db(from_station, to_station)
+    db_elapsed = int((time_module.time() - db_start) * 1000)
+
+    # === 2. Mini Redis 캐시 조회 n번 측정 ===
+    # 첫 번째는 DB에서 가져와서 캐시에 저장하고 (Cache MISS)
+    # 나머지 n-1번은 캐시에서 바로 꺼내 (Cache HIT)
+    # 이게 Cache Aside 패턴이야.
+    store.delete(cache_key)  # 먼저 캐시 초기화
+
+    cache_start = time_module.time()
+    for i in range(n):
+        cached_value = store.get(cache_key)
+        if cached_value is None:
+            # 캐시 미스: DB에서 가져와서 캐시에 저장
             result = get_trains_from_db(from_station, to_station)
-            store.set(cache_key, json.dumps(result), ttl=60)
-    cache_elapsed = int((time() - cache_start) * 1000)
+            store.set(cache_key, json.dumps(result, ensure_ascii=False), ttl=300)
+        else:
+            # 캐시 히트: 캐시에서 꺼내서 역직렬화
+            result = json.loads(cached_value)
+    cache_elapsed = int((time_module.time() - cache_start) * 1000)
+
+    # speedup이 0으로 나오는 걸 방지하기 위해 최소값 1로 설정
+    speedup = round(db_elapsed / max(cache_elapsed, 1), 1)
 
     return {
         "iterations": n,
         "db_only_ms": db_elapsed,
         "mini_redis_ms": cache_elapsed,
         "real_redis_ms": None,  # 13번에서 채움
-        "speedup": round(db_elapsed / max(cache_elapsed, 1), 1)
+        "speedup": speedup
     }
