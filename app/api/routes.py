@@ -6,8 +6,12 @@ SECTION A(CRUD)는 팀원 A가, SECTION B(TTL)는 팀원 B가 담당한다.
 각 함수의 body는 비워두었으니, 주석 힌트를 참고해서 로직을 채워넣으면 돼.
 """
 
+import json
+from time import time
+
 from fastapi import APIRouter, HTTPException
 from app.core.store import store
+from app.core.database import get_trains as get_trains_from_db
 from app.models.schemas import (
     SetRequest,
     SetNxRequest,
@@ -168,3 +172,79 @@ async def get_ttl(key: str):
     # TTL 계산과 예외 규칙은 store가 이미 구현했으므로 라우터는 결과만 전달하면 된다.
     return TTLResponse(ttl=store.ttl(key))
     # Codex 추가 끝
+
+
+# ══════════════════════════════════════════════
+# SECTION C: 열차 조회 & 벤치마크 (11번 프롬프트)
+# ══════════════════════════════════════════════
+
+
+@router.get("/trains")
+async def get_trains(from_station: str, to_station: str):
+    """
+    DB에서 열차 목록을 직접 조회하는 엔드포인트야.
+    캐시를 사용하지 않고 매번 SQLite 파일에서 읽어와.
+    벤치마크에서 '캐시 없을 때' 기준으로 사용해.
+    """
+    start = time()
+    result = get_trains_from_db(from_station, to_station)
+    elapsed = int((time() - start) * 1000)
+    return {"trains": result, "source": "db", "elapsed_ms": elapsed}
+
+
+@router.get("/trains/cached")
+async def get_trains_cached(from_station: str, to_station: str):
+    """
+    Mini Redis 캐시에서 먼저 조회하는 엔드포인트야.
+    캐시에 있으면 바로 반환해 (Cache HIT).
+    없으면 DB에서 가져와서 캐시에 저장한 뒤 반환해 (Cache MISS).
+    이게 바로 Cache Aside 패턴이야.
+    """
+    cache_key = f"trains:{from_station}:{to_station}"
+    start = time()
+
+    # 캐시에서 먼저 찾아봐
+    cached = store.get(cache_key)
+    if cached:
+        # 캐시 히트! 바로 돌려줘.
+        elapsed = int((time() - start) * 1000)
+        return {"trains": json.loads(cached), "source": "cache_hit", "elapsed_ms": elapsed}
+
+    # 캐시 미스! DB에서 가져와서 캐시에 저장해.
+    result = get_trains_from_db(from_station, to_station)
+    store.set(cache_key, json.dumps(result), ttl=60)
+    elapsed = int((time() - start) * 1000)
+    return {"trains": result, "source": "cache_miss", "elapsed_ms": elapsed}
+
+
+@router.get("/benchmark/trains")
+async def benchmark_trains(n: int = 10, from_station: str = "서울", to_station: str = "부산"):
+    """
+    DB 직접 조회 vs Mini Redis 캐시 성능을 비교하는 엔드포인트야.
+    n번 반복해서 각각의 총 시간을 측정하고 결과를 돌려줘.
+    캐시가 얼마나 빠른지 숫자로 확인할 수 있어.
+    """
+    # 1. 캐시 없이 DB에서 n번 직접 조회
+    db_start = time()
+    for _ in range(n):
+        get_trains_from_db(from_station, to_station)
+    db_elapsed = int((time() - db_start) * 1000)
+
+    # 2. Mini Redis 캐시로 n번 조회 (첫 번째는 MISS, 나머지는 HIT)
+    cache_key = f"trains:{from_station}:{to_station}"
+    store.delete(cache_key)  # 캐시 초기화해서 공정한 테스트
+    cache_start = time()
+    for _ in range(n):
+        cached = store.get(cache_key)
+        if not cached:
+            result = get_trains_from_db(from_station, to_station)
+            store.set(cache_key, json.dumps(result), ttl=60)
+    cache_elapsed = int((time() - cache_start) * 1000)
+
+    return {
+        "iterations": n,
+        "db_only_ms": db_elapsed,
+        "mini_redis_ms": cache_elapsed,
+        "real_redis_ms": None,  # 13번에서 채움
+        "speedup": round(db_elapsed / max(cache_elapsed, 1), 1)
+    }
