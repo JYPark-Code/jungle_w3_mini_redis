@@ -288,6 +288,83 @@ async def benchmark_trains(n: int = 100, from_station: str = "서울", to_statio
     }
 
 
+@router.get("/benchmark/redis-compare")
+async def benchmark_redis_compare(n: int = 1000):
+    """
+    Mini Redis와 실제 Redis를 같은 조건에서 비교하는 엔드포인트야.
+    DB 조회 없이 순수하게 set/get 속도만 측정해.
+    이렇게 하면 두 구현의 순수한 성능 차이를 볼 수 있어.
+    """
+    import time as time_module
+
+    test_key = "benchmark:compare:key"
+    test_value = "benchmark_test_value"
+
+    # === 1. Mini Redis set/get n번 ===
+    # 같은 프로세스 안에서 직접 호출하는 방식이야.
+    # HTTP 오버헤드 없이 순수하게 HashTable 조회 속도를 측정해.
+    mini_start = time_module.perf_counter()
+    for i in range(n):
+        store.set(f"{test_key}:{i}", test_value)
+        store.get(f"{test_key}:{i}")
+    mini_elapsed = round((time_module.perf_counter() - mini_start) * 1000, 2)
+
+    # 테스트 키 정리
+    for i in range(n):
+        store.delete(f"{test_key}:{i}")
+
+    # === 2. 실제 Redis set/get n번 ===
+    # TCP 소켓으로 Docker Redis 서버와 통신하는 방식이야.
+    # 로컬 환경에서는 Docker 네트워크 오버헤드가 발생해.
+    real_elapsed = None
+    real_ops_per_sec = None
+
+    if redis_ping():
+        real_start = time_module.perf_counter()
+        for i in range(n):
+            redis_set(f"{test_key}:{i}", test_value)
+            redis_get(f"{test_key}:{i}")
+        real_elapsed = round((time_module.perf_counter() - real_start) * 1000, 2)
+
+        # 테스트 키 정리
+        for i in range(n):
+            redis_delete(f"{test_key}:{i}")
+
+        real_ops_per_sec = round((n * 2) / (real_elapsed / 1000))
+
+    mini_ops_per_sec = round((n * 2) / (mini_elapsed / 1000))
+
+    return {
+        "iterations": n,
+        "operations": n * 2,  # set + get
+        "mini_redis": {
+            "elapsed_ms": mini_elapsed,
+            "ops_per_sec": mini_ops_per_sec,
+            "protocol": "In-process (직접 호출)",
+            "structure": "Python HashTable (배열 + 체이닝)"
+        },
+        "real_redis": {
+            "elapsed_ms": real_elapsed,
+            "ops_per_sec": real_ops_per_sec,
+            "protocol": "TCP Socket (RESP 프로토콜)",
+            "structure": "C 구현 HashTable"
+        } if real_elapsed else None,
+        "why_mini_faster_locally": [
+            "Mini Redis는 같은 프로세스 안에서 직접 함수 호출",
+            "실제 Redis는 TCP 소켓 → Docker 네트워크 → Redis 서버 왕복",
+            "로컬 Docker 환경에서는 네트워크 레이어 오버헤드 발생",
+            "프로덕션 환경(전용 서버)에서는 실제 Redis가 훨씬 빠름"
+        ],
+        "why_real_redis_better_in_production": [
+            "C 언어로 구현된 최적화된 자료구조",
+            "단일 스레드 이벤트 루프로 동시성 처리 (GIL 없음)",
+            "전용 서버에서 네트워크 최적화",
+            "메모리 최적화 (jemalloc 사용)",
+            "다양한 자료구조 지원 (String, List, Hash, Set, ZSet)"
+        ]
+    }
+
+
 @router.post("/benchmark/concurrent")
 async def benchmark_concurrent(train_id: str, seat: str, n: int = 5):
     """
