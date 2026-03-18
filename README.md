@@ -91,6 +91,21 @@ threading.Lock → 1명만 setnx 성공
     └── snapshot.json 복원 (만료 키 제외)
 ```
 
+### Mini Redis vs 실제 Redis 비교
+
+| 항목 | Mini Redis (우리 구현) | 실제 Redis |
+|------|----------------------|-----------|
+| 구현 언어 | Python | C |
+| 통신 프로토콜 | HTTP/REST | TCP/RESP |
+| 자료구조 | 직접 구현한 HashTable | 최적화된 내장 구조 |
+| 동시성 | threading.Lock | 단일 스레드 이벤트 루프 |
+| TTL 처리 | Lazy Deletion | Lazy + Active 병행 |
+| 영속성 | JSON 스냅샷 | RDB / AOF |
+| 자료구조 종류 | String만 지원 | String, List, Hash, Set, ZSet |
+| 메모리 관리 | Python GC | jemalloc |
+| 로컬 성능 | 1.11ms / 1,801,802 ops/sec | 558ms / 3,578 ops/sec (Docker 오버헤드) |
+| 프로덕션 성능 | 수ms | 1ms 이하 |
+
 ---
 
 ## 📡 API 명세
