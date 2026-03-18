@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from app.core.store import store
 from app.core.database import get_trains as get_trains_from_db
 from app.core.redis_client import redis_set, redis_get, redis_delete, redis_ping
-from app.core.persistence import save_snapshot
+from app.core.persistence import save_snapshot, SNAPSHOT_PATH
 from app.models.schemas import (
     SetRequest,
     SetNxRequest,
@@ -496,10 +496,9 @@ async def snapshot_clear():
     # snapshot.json 파일을 삭제해.
     # 삭제 후 서버를 재시작하면 데이터가 없는 상태로 시작돼.
     # "스냅샷 없이 재시작하면 데이터가 사라진다"는 걸 보여줄 때 사용해.
-    import os
     try:
-        if os.path.exists("snapshot.json"):
-            os.remove("snapshot.json")
+        if SNAPSHOT_PATH.exists():
+            SNAPSHOT_PATH.unlink()
             return {"success": True, "message": "스냅샷 삭제 완료 — 재시작 시 데이터 없음"}
         return {"success": False, "message": "snapshot.json 파일이 없습니다"}
     except Exception as e:
@@ -510,14 +509,13 @@ async def snapshot_clear():
 async def snapshot_status():
     # snapshot.json 파일의 상태를 확인해.
     # 마지막 저장 시각과 저장된 키 수를 반환해.
-    import os
     import json as json_module
 
-    if not os.path.exists("snapshot.json"):
+    if not SNAPSHOT_PATH.exists():
         return {"exists": False, "key_count": 0, "saved_at": None}
 
     try:
-        with open("snapshot.json", "r") as f:
+        with open(SNAPSHOT_PATH, "r", encoding="utf-8") as f:
             data = json_module.load(f)
         key_count = len(data.get("data", {}))
         saved_at = data.get("saved_at", "알 수 없음")
