@@ -530,8 +530,9 @@ async function reserveSeat(trainId, seat) {
 
 async function concurrentReserve(trainId) {
   // 같은 좌석(A1)을 여러 명이 동시에 예약 시도하는 시뮬레이션이야.
-  // /setnx를 사용해서 "먼저 온 1명만 성공"하는 걸 보여줘.
-  // 각 요청의 응답 시간도 기록해서, Lock이 순차 처리하는 걸 확인할 수 있어.
+  // Barrier 패턴을 사용해서 모든 요청이 준비된 후 동시에 출발해.
+  // 마치 출발선에 모든 선수가 서 있다가 출발 신호를 받고 동시에 뛰는 것처럼.
+  // 이렇게 해야 사용자 1이 항상 먼저 도착하는 문제를 없앨 수 있어.
   const count = parseInt(document.getElementById("concurrent-count").value) || 5;
   const resultDiv = document.getElementById("concurrent-result");
   const seat = "A1";
@@ -544,12 +545,21 @@ async function concurrentReserve(trainId) {
 
   resultDiv.innerHTML = '<p style="color:#999">시뮬레이션 실행 중...</p>';
 
-  // N명이 동시에 같은 좌석에 /setnx 요청
-  // Promise.all로 모든 요청을 동시에 보내고, 각 요청의 응답 시간도 측정해.
-  const startTime = Date.now();
+  // Barrier 역할을 하는 Promise야.
+  // 모든 사용자가 준비될 때까지 기다렸다가 동시에 출발시켜.
+  let startSignal;
+  const barrier = new Promise(resolve => {
+    startSignal = resolve;  // 출발 신호를 외부에서 쏠 수 있게 저장해둬
+  });
 
-  const results = await Promise.all(
-    Array.from({ length: count }, async (_, i) => {
+  // N명의 요청을 미리 준비해 (아직 보내지 않음)
+  // 각 요청 함수는 barrier를 await하면서 출발 신호를 기다려.
+  const requests = Array.from({ length: count }, (_, i) => {
+    return async () => {
+      // 출발 신호 대기 - 모든 사용자가 여기서 동시에 대기해
+      await barrier;
+
+      // 신호가 오면 동시에 요청 출발
       const reqStart = Date.now();
       try {
         const res = await fetch(`${API}/setnx`, {
@@ -568,9 +578,19 @@ async function concurrentReserve(trainId) {
       } catch (e) {
         return { userId: i + 1, success: false, message: "서버 오류", responseTime: 0 };
       }
-    })
-  );
+    };
+  });
 
+  // 모든 요청 함수를 실행 대기 상태로 올려놔
+  // 이 시점에서 모든 요청이 barrier에서 대기 중이야.
+  const pending = requests.map(req => req());
+
+  // 출발 신호 발사! 이 순간 모든 요청이 동시에 서버로 향해.
+  const startTime = Date.now();
+  startSignal();
+
+  // 모든 결과 수집
+  const results = await Promise.all(pending);
   const totalTime = Date.now() - startTime;
   const successCount = results.filter(r => r.success).length;
   const failCount = results.filter(r => !r.success).length;
