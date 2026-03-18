@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException
 from app.core.store import store
 from app.core.database import get_trains as get_trains_from_db
 from app.core.redis_client import redis_set, redis_get, redis_delete, redis_ping
+from app.core.persistence import save_snapshot
 from app.models.schemas import (
     SetRequest,
     SetNxRequest,
@@ -471,3 +472,55 @@ async def benchmark_concurrent(train_id: str, seat: str, n: int = 5):
         "winner": success_user["userId"] if success_user else None,
         "results": sorted(results, key=lambda x: x["userId"])
     }
+
+
+# ══════════════════════════════════════════════
+# SECTION D: 스냅샷 영속성 (14_4 프롬프트)
+# ══════════════════════════════════════════════
+
+
+@router.post("/snapshot/save")
+async def snapshot_save():
+    # 지금 Mini Redis에 있는 모든 데이터를 snapshot.json에 저장해.
+    # 발표 때 "지금 저장하겠습니다"라고 하고 누르면 돼.
+    try:
+        save_snapshot(store)
+        key_count = len(store.keys())
+        return {"success": True, "message": f"스냅샷 저장 완료 ({key_count}개 키)"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@router.delete("/snapshot/clear")
+async def snapshot_clear():
+    # snapshot.json 파일을 삭제해.
+    # 삭제 후 서버를 재시작하면 데이터가 없는 상태로 시작돼.
+    # "스냅샷 없이 재시작하면 데이터가 사라진다"는 걸 보여줄 때 사용해.
+    import os
+    try:
+        if os.path.exists("snapshot.json"):
+            os.remove("snapshot.json")
+            return {"success": True, "message": "스냅샷 삭제 완료 — 재시작 시 데이터 없음"}
+        return {"success": False, "message": "snapshot.json 파일이 없습니다"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@router.get("/snapshot/status")
+async def snapshot_status():
+    # snapshot.json 파일의 상태를 확인해.
+    # 마지막 저장 시각과 저장된 키 수를 반환해.
+    import os
+    import json as json_module
+
+    if not os.path.exists("snapshot.json"):
+        return {"exists": False, "key_count": 0, "saved_at": None}
+
+    try:
+        with open("snapshot.json", "r") as f:
+            data = json_module.load(f)
+        key_count = len(data.get("data", {}))
+        saved_at = data.get("saved_at", "알 수 없음")
+        return {"exists": True, "key_count": key_count, "saved_at": saved_at}
+    except Exception:
+        return {"exists": False, "key_count": 0, "saved_at": None}
