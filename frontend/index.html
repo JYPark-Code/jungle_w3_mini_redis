@@ -46,32 +46,31 @@
 
     /* 열차 카드 */
     .train-card {
-      background: #fff; border-radius: 8px; padding: 16px 20px;
+      background: #fff; border-radius: 8px; padding: 16px;
       margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
       cursor: pointer; transition: box-shadow 0.2s;
       border-left: 4px solid #0052A4;
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: nowrap; overflow: hidden; width: 100%; box-sizing: border-box;
     }
     .train-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,0.15); }
     .train-card.srt { border-left-color: #C8002B; }
-    .train-card .top-row {
-      display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 6px;
-    }
-    .train-card .train-id { font-weight: 700; font-size: 16px; }
-    .train-card .train-type {
+    .train-info { flex: 1; min-width: 0; }
+    .train-info .train-id { font-weight: 700; font-size: 16px; }
+    .train-info .train-type {
       font-size: 12px; padding: 2px 8px; border-radius: 4px;
-      color: white; font-weight: 600;
+      color: white; font-weight: 600; margin-left: 6px;
     }
     .train-type.ktx { background: #0052A4; }
     .train-type.srt { background: #C8002B; }
-    .train-card .price { font-weight: 700; font-size: 16px; color: #0052A4; }
-    .train-card.srt .price { color: #C8002B; }
-    .train-card .route { font-size: 14px; color: #666; }
-    .train-card .select-btn {
-      float: right; font-size: 13px; color: #0052A4;
-      font-weight: 600; margin-top: 4px;
+    .train-info .route { font-size: 14px; color: #666; margin-top: 4px; }
+    .train-action { flex-shrink: 0; text-align: right; margin-left: 16px; }
+    .train-action .price { font-weight: 700; font-size: 16px; color: #0052A4; }
+    .train-card.srt .train-action .price { color: #C8002B; }
+    .train-action .select-btn {
+      font-size: 13px; color: #0052A4; font-weight: 600; margin-top: 4px; display: block;
     }
-    .train-card.srt .select-btn { color: #C8002B; }
+    .train-card.srt .train-action .select-btn { color: #C8002B; }
 
     /* 좌석 선택 화면 */
     .seat-view { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
@@ -149,14 +148,14 @@
     <!-- 노선 검색 바 -->
     <div class="search-bar">
       <label>출발지</label>
-      <select id="from-select">
+      <select id="from-select" onchange="updateDestOptions()">
         <option value="서울">서울</option>
         <option value="부산">부산</option>
         <option value="대전">대전</option>
         <option value="대구">대구</option>
       </select>
       <label>도착지</label>
-      <select id="to-select">
+      <select id="to-select" onchange="updateDestOptions()">
         <option value="부산">부산</option>
         <option value="서울">서울</option>
         <option value="대전">대전</option>
@@ -207,6 +206,10 @@ const SEATS = ["A1","A2","A3","A4","A5","B1","B2","B3","B4","B5"];
 // API 서버 주소
 const API = "http://localhost:8000";
 
+// 현재 선택된 열차 정보를 저장하는 변수야.
+// 좌석 화면에서 어떤 열차의 좌석을 보고 있는지 기억해둬야 하니까 필요해.
+let selectedTrain = null;
+
 
 // ──────────────────────────────────────────────
 // 유틸리티 함수
@@ -247,6 +250,87 @@ function addCacheLog(type, key) {
 
 
 // ──────────────────────────────────────────────
+// FIX 1: 출발지/도착지 동일 선택 방지
+// ──────────────────────────────────────────────
+
+function updateDestOptions() {
+  // 출발지와 도착지가 같은 값이 되지 않도록 막아주는 함수야.
+  // 출발지에서 선택한 값은 도착지 드롭다운에서 비활성화하고,
+  // 도착지에서 선택한 값은 출발지 드롭다운에서 비활성화해.
+  const fromSelect = document.getElementById("from-select");
+  const toSelect = document.getElementById("to-select");
+  const fromVal = fromSelect.value;
+  const toVal = toSelect.value;
+
+  // 출발지 드롭다운: 도착지에서 선택된 값은 비활성화
+  Array.from(fromSelect.options).forEach(opt => {
+    opt.disabled = (opt.value === toVal);
+  });
+
+  // 도착지 드롭다운: 출발지에서 선택된 값은 비활성화
+  Array.from(toSelect.options).forEach(opt => {
+    opt.disabled = (opt.value === fromVal);
+  });
+
+  // 만약 같은 값이 선택된 상태라면 도착지를 다른 값으로 바꿔줘
+  if (fromVal === toVal) {
+    const available = Array.from(toSelect.options).find(opt => opt.value !== fromVal);
+    if (available) toSelect.value = available.value;
+    // 다시 비활성화 업데이트
+    Array.from(toSelect.options).forEach(opt => {
+      opt.disabled = (opt.value === fromSelect.value);
+    });
+  }
+}
+
+// ──────────────────────────────────────────────
+// FIX 3: 좌석 예약 상태 확인 헬퍼
+// ──────────────────────────────────────────────
+
+async function isSeatReserved(trainId, seatNo) {
+  // Mini Redis에서 해당 좌석이 예약되어 있는지 확인해.
+  // 404가 나오면 예약 안 된 것 (정상), 200이면 이미 예약된 것.
+  // try-catch로 감싸서 네트워크 에러도 안전하게 처리해.
+  try {
+    const res = await fetch(`${API}/get/seat:${trainId}:${seatNo}`);
+    if (res.status === 404) return false;  // 예약 안 됨
+    if (res.ok) return true;               // 이미 예약됨
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function refreshSeats() {
+  // 현재 보고 있는 열차의 좌석 상태만 새로고침하는 함수야.
+  // 전체 화면을 다시 그리지 않고, 좌석 버튼들만 업데이트해.
+  // 동시 예약 결과창이 사라지지 않도록 좌석 그리드만 교체해.
+  if (!selectedTrain) return;
+  const trainId = selectedTrain.id;
+
+  const seatStatuses = await Promise.all(
+    SEATS.map(async seat => ({
+      seat,
+      reserved: await isSeatReserved(trainId, seat)
+    }))
+  );
+
+  const seatGrid = document.querySelector(".seat-grid");
+  if (!seatGrid) return;
+
+  let seatsHtml = '';
+  seatStatuses.forEach(({ seat, reserved }) => {
+    if (reserved) {
+      seatsHtml += `<button class="seat-btn reserved" disabled>${seat} X</button>`;
+    } else {
+      seatsHtml += `<button class="seat-btn available" onclick="reserveSeat('${trainId}','${seat}')">${seat} O</button>`;
+    }
+  });
+  seatGrid.innerHTML = seatsHtml;
+}
+
+
+// ──────────────────────────────────────────────
 // 열차 검색 (Cache Aside Pattern 적용)
 // ──────────────────────────────────────────────
 
@@ -258,6 +342,13 @@ async function searchTrains() {
   // 이렇게 하면 같은 노선을 반복 조회할 때 훨씬 빨라져.
   const from = document.getElementById("from-select").value;
   const to = document.getElementById("to-select").value;
+
+  // FIX 1: 출발지와 도착지가 같으면 조회하지 않고 알림을 보여줘.
+  if (from === to) {
+    showToast("출발지와 도착지가 같습니다");
+    return;
+  }
+
   const cacheKey = `trains:${from}:${to}`;
   const statusEl = document.getElementById("cache-status");
 
@@ -326,15 +417,15 @@ function renderTrainList(trains, from, to) {
     const isSrt = train.type === "SRT";
     html += `
       <div class="train-card ${isSrt ? 'srt' : ''}" onclick="showSeats('${train.id}')">
-        <div class="top-row">
-          <span>
-            <span class="train-id">${train.id}</span>
-            <span class="train-type ${isSrt ? 'srt' : 'ktx'}">${train.type}</span>
-          </span>
-          <span class="price">${formatPrice(train.price)}</span>
+        <div class="train-info">
+          <span class="train-id">${train.id}</span>
+          <span class="train-type ${isSrt ? 'srt' : 'ktx'}">${train.type}</span>
+          <div class="route">${train.from} ${train.depart} -> ${train.to} ${train.arrive}</div>
         </div>
-        <div class="route">${train.from} ${train.depart} -> ${train.to} ${train.arrive}</div>
-        <span class="select-btn">좌석 선택 &rarr;</span>
+        <div class="train-action">
+          <div class="price">${formatPrice(train.price)}</div>
+          <span class="select-btn">좌석 선택 &rarr;</span>
+        </div>
       </div>
     `;
   });
@@ -353,19 +444,17 @@ async function showSeats(trainId) {
   const train = TRAINS.find(t => t.id === trainId);
   if (!train) return;
 
+  // 현재 선택된 열차를 기억해둔다 (refreshSeats에서 사용)
+  selectedTrain = train;
   const content = document.getElementById("main-content");
 
   // 각 좌석의 예약 상태를 Mini Redis에서 조회
+  // isSeatReserved를 사용해서 404 에러가 콘솔에 나타나지 않게 처리해.
   const seatStatuses = await Promise.all(
-    SEATS.map(async seat => {
-      try {
-        const res = await fetch(`${API}/get/seat:${trainId}:${seat}`);
-        // 200이면 예약됨, 404면 예약 가능
-        return { seat, reserved: res.ok };
-      } catch (e) {
-        return { seat, reserved: false };
-      }
-    })
+    SEATS.map(async seat => ({
+      seat,
+      reserved: await isSeatReserved(trainId, seat)
+    }))
   );
 
   let seatsHtml = '';
@@ -408,20 +497,20 @@ async function showSeats(trainId) {
 
 async function reserveSeat(trainId, seat) {
   // 선택한 좌석을 Mini Redis에 예약하는 함수야.
-  // 1. 좌석이 이미 예약되었는지 확인하고
+  // 1. 먼저 좌석이 이미 예약되었는지 확인하고
   // 2. 비어있으면 예약을 저장해 (TTL 300초 = 5분 동안 유효)
-  // 3. 화면을 새로고침해서 좌석 상태를 업데이트해.
+  // 3. 좌석 상태만 새로고침해서 화면을 업데이트해.
   const key = `seat:${trainId}:${seat}`;
 
-  try {
-    // 이미 예약되었는지 확인
-    const check = await fetch(`${API}/get/${key}`);
-    if (check.ok) {
-      showToast("이미 예약된 좌석입니다");
-      return;
-    }
+  // 1. 먼저 예약 여부 확인 (isSeatReserved로 404 에러 방지)
+  const reserved = await isSeatReserved(trainId, seat);
+  if (reserved) {
+    showToast("이미 예약된 좌석입니다");
+    return;
+  }
 
-    // 예약 저장 (TTL 300초)
+  // 2. 예약 가능하면 저장 (TTL 300초)
+  try {
     const res = await fetch(`${API}/set`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -430,8 +519,8 @@ async function reserveSeat(trainId, seat) {
 
     if (res.ok) {
       showToast(`${seat} 좌석 예약 완료!`);
-      // 좌석 화면 새로고침
-      showSeats(trainId);
+      // 좌석 상태만 새로고침 (전체 화면을 다시 그리지 않음)
+      await refreshSeats();
     } else {
       showToast("예약에 실패했습니다");
     }
@@ -500,9 +589,12 @@ async function concurrentReserve(trainId) {
 
   resultDiv.innerHTML = html;
 
-  // 좌석 상태 새로고침
-  showSeats(trainId);
+  // 좌석 상태만 새로고침 (결과창이 사라지지 않도록 showSeats 대신 refreshSeats 사용)
+  await refreshSeats();
 }
+
+// 페이지 로드 시 드롭다운 초기 상태 설정
+updateDestOptions();
 </script>
 </body>
 </html>
