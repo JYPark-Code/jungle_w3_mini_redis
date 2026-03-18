@@ -240,7 +240,9 @@
 <body>
 
 <header>
-  <h1>Mini Redis - 열차 예약 데모</h1>
+  <h1 onclick="window.location.href='index.html'"
+      style="cursor: pointer; user-select: none;"
+      title="홈으로 이동">Mini Redis - 열차 예약</h1>
   <span>해시 테이블 기반 인메모리 키-값 저장소</span>
   <span id="redisStatusBadge" style="font-size:13px;">확인 중...</span>
 </header>
@@ -270,7 +272,9 @@
 
     <!-- 열차 목록 또는 좌석 선택 화면이 여기에 표시됨 -->
     <div id="main-content">
-      <p style="color:#999; text-align:center; margin-top:60px;">출발지와 도착지를 선택한 뒤 조회하기를 눌러주세요.</p>
+      <div id="trainList">
+        <p style="color:#999; text-align:center; margin-top:60px;">열차 목록을 불러오는 중...</p>
+      </div>
     </div>
   </div>
 
@@ -370,18 +374,11 @@
       <div class="benchmark-controls">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
           <label style="font-size:14px;font-weight:600;">노선:</label>
-          <select id="benchmarkFrom">
-            <option value="서울">서울</option>
-            <option value="부산">부산</option>
-            <option value="대전">대전</option>
-            <option value="대구">대구</option>
-          </select>
-          <span style="font-size:16px;font-weight:600;">→</span>
-          <select id="benchmarkTo">
-            <option value="부산">부산</option>
-            <option value="서울">서울</option>
-            <option value="대전">대전</option>
-            <option value="대구">대구</option>
+          <select id="benchmarkRoute"
+                  style="padding: 4px 8px; font-size: 0.9rem; border: 1px solid #ddd; border-radius: 4px;">
+            <option value="서울|부산">서울 → 부산</option>
+            <option value="서울|대전">서울 → 대전</option>
+            <option value="서울|대구">서울 → 대구</option>
           </select>
         </div>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
@@ -706,6 +703,82 @@ async function searchTrains() {
 // ──────────────────────────────────────────────
 // 열차 목록 렌더링
 // ──────────────────────────────────────────────
+
+function renderTrainCard(train) {
+  // 열차 한 개의 카드 HTML을 반환하는 함수야.
+  // loadAllTrains에서 노선별로 열차를 그릴 때 사용해.
+  const isSrt = train.type === "SRT";
+  return `
+    <div class="train-card ${isSrt ? 'srt' : ''}" onclick="showSeats('${train.id}')">
+      <div class="train-info">
+        <span class="train-id">${train.id}</span>
+        <span class="train-type ${isSrt ? 'srt' : 'ktx'}">${train.type}</span>
+        <div class="route">${train.from} ${train.depart} → ${train.to} ${train.arrive}</div>
+      </div>
+      <div class="train-action">
+        <div class="price">${formatPrice(train.price)}</div>
+        <span class="select-btn">좌석 선택 &rarr;</span>
+      </div>
+    </div>
+  `;
+}
+
+async function loadAllTrains() {
+  // 페이지 로드 시 모든 노선의 열차 목록을 가져와서 표시해.
+  // 노선별로 그룹핑해서 보여줘.
+  const routes = [
+    { from: "서울", to: "부산" },
+    { from: "서울", to: "대전" },
+    { from: "서울", to: "대구" },
+  ];
+
+  const allTrains = {};
+  for (const route of routes) {
+    try {
+      const res = await fetch(
+        `${API}/trains/cached?from_station=${encodeURIComponent(route.from)}&to_station=${encodeURIComponent(route.to)}`
+      );
+      const data = await res.json();
+      allTrains[`${route.from} → ${route.to}`] = data.trains;
+
+      // 캐시 히트/미스 대시보드 업데이트
+      const isHit = data.source === 'cache_hit';
+      updateDashboard({
+        type: isHit ? 'HIT' : 'MISS',
+        responseTime: data.elapsed_ms,
+        key: `trains:${route.from}:${route.to}`
+      });
+    } catch (e) {
+      allTrains[`${route.from} → ${route.to}`] = [];
+    }
+  }
+
+  renderAllTrains(allTrains);
+}
+
+function renderAllTrains(allTrains) {
+  // 노선별로 그룹핑된 전체 열차 목록을 렌더링해.
+  const container = document.getElementById('trainList');
+  if (!container) return;
+
+  let html = '';
+  for (const [route, trains] of Object.entries(allTrains)) {
+    html += `
+      <div style="margin-bottom: 16px;">
+        <div style="font-weight: 700; font-size: 1rem;
+                    color: #333; margin-bottom: 8px;
+                    padding-bottom: 4px; border-bottom: 2px solid #e0e0e0;">
+          🚄 ${route}
+        </div>
+        ${trains.map(train => renderTrainCard(train)).join('')}
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+
+  // 마지막 검색 결과 업데이트 (showSeats에서 참조)
+  lastTrainResults = Object.values(allTrains).flat();
+}
 
 function renderTrainList(trains, from, to) {
   // 검색 결과로 나온 열차들을 카드 형태로 화면에 보여주는 함수야.
@@ -1228,8 +1301,9 @@ async function runBenchmark() {
   // /benchmark/trains API를 호출해서 성능 비교 결과를 받아오는 함수야.
   // DB 직접 조회와 Mini Redis 캐시의 속도 차이를 바 차트로 보여줘.
   const n = document.getElementById('benchmarkN').value;
-  const from = document.getElementById('benchmarkFrom').value;
-  const to = document.getElementById('benchmarkTo').value;
+  // 단일 드롭다운에서 출발지/도착지 파싱
+  const route = document.getElementById('benchmarkRoute').value;
+  const [from, to] = route.split('|');
 
   const resultDiv = document.getElementById('benchmark-result');
   resultDiv.innerHTML = '<p style="color:#999;font-size:13px;">벤치마크 실행 중...</p>';
@@ -1381,9 +1455,10 @@ async function checkRedisStatus() {
   }
 }
 
-// 페이지 로드 시 드롭다운 초기 상태 설정 + Redis 상태 확인
+// 페이지 로드 시 초기화
 updateDestOptions();
 checkRedisStatus();
+loadAllTrains();
 </script>
 </body>
 </html>
