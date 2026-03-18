@@ -313,6 +313,53 @@ class MiniRedis:
             self.hash_table.flush()
             self.expire_at.flush()
 
+    def get_all_data(self) -> dict:
+        """
+        현재 저장된 모든 데이터와 만료 정보를 딕셔너리로 반환한다.
+        persistence.py가 스냅샷을 JSON 파일로 저장할 때 이 메서드를 호출해.
+
+        반환 형태:
+        {
+          "data": { "user:1": "jiyong", ... },
+          "expire_at": { "user:1": 1700000000.0, ... }
+        }
+
+        주의: 여기서는 JSON 저장을 위해 Python dict를 사용한다.
+        이건 '데이터 저장소'가 아니라 '내보내기용 변환'이므로 괜찮아.
+        """
+        # hash_table의 모든 키를 순회하면서 dict로 변환
+        data = {}
+        for key in self.hash_table.keys():
+            data[key] = self.hash_table.get(key)
+
+        # expire_at의 모든 키를 순회하면서 dict로 변환
+        expire = {}
+        for key in self.expire_at.keys():
+            expire[key] = self.expire_at.get(key)
+
+        return {"data": data, "expire_at": expire}
+
+    def load_data(self, data: dict, expire_at: dict) -> None:
+        """
+        외부에서 가져온 데이터를 store에 직접 주입한다.
+        persistence.py가 스냅샷 파일을 읽어서 복원할 때 이 메서드를 호출해.
+
+        마치 게임 로드처럼, 저장해둔 데이터를 해시 테이블에 하나씩 넣어주는 거야.
+        Lock으로 보호해서 복원 도중에 다른 요청이 끼어들지 못하게 한다.
+        """
+        with self.lock:
+            # 기존 데이터를 비우고 새로 넣는다.
+            self.hash_table.flush()
+            self.expire_at.flush()
+
+            # 데이터를 하나씩 해시 테이블에 넣는다.
+            for key, value in data.items():
+                self.hash_table.set(key, value)
+
+            # 만료 정보도 하나씩 해시 테이블에 넣는다.
+            for key, exp_time in expire_at.items():
+                self.expire_at.set(key, exp_time)
+
 
 # 싱글톤 인스턴스 생성
 # 앱 전체에서 하나의 MiniRedis 인스턴스를 공유한다.
