@@ -18,6 +18,28 @@ from pathlib import Path
 # app/core/persistence.py → app/core → app → 프로젝트 루트
 SNAPSHOT_PATH = Path(__file__).parent.parent.parent / "snapshot.json"
 
+# 스냅샷 저장을 비활성화하는 플래그야.
+# /snapshot/clear 호출 시 True로 설정되어
+# 서버 종료 시 자동 저장을 막아줘.
+_snapshot_disabled = False
+
+
+def disable_snapshot():
+    # 스냅샷 저장을 비활성화해.
+    # 이 함수를 호출하면 이후 save_snapshot()이 아무것도 안 해.
+    global _snapshot_disabled
+    _snapshot_disabled = True
+
+
+def enable_snapshot():
+    # 스냅샷 저장을 다시 활성화해.
+    global _snapshot_disabled
+    _snapshot_disabled = False
+
+
+def is_snapshot_disabled() -> bool:
+    return _snapshot_disabled
+
 
 def save_snapshot(store) -> None:
     """
@@ -32,6 +54,12 @@ def save_snapshot(store) -> None:
       "saved_at": "2024-01-01T00:00:00"
     }
     """
+    # 스냅샷 저장이 비활성화된 경우 아무것도 하지 않아.
+    # /snapshot/clear 후 서버가 꺼질 때 재생성을 막기 위해서야.
+    if _snapshot_disabled:
+        print("[Persistence] 스냅샷 저장 비활성화 상태 — 저장 건너뜀")
+        return
+
     try:
         # store에서 현재 데이터와 만료 정보를 가져온다.
         all_data = store.get_all_data()
