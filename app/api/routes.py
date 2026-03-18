@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from app.core.store import store
 from app.core.database import get_trains as get_trains_from_db
 from app.core.redis_client import redis_set, redis_get, redis_delete, redis_ping
-from app.core.persistence import save_snapshot, SNAPSHOT_PATH
+from app.core.persistence import save_snapshot, SNAPSHOT_PATH, disable_snapshot, enable_snapshot
 from app.models.schemas import (
     SetRequest,
     SetNxRequest,
@@ -481,9 +481,10 @@ async def benchmark_concurrent(train_id: str, seat: str, n: int = 5):
 
 @router.post("/snapshot/save")
 async def snapshot_save():
-    # 지금 Mini Redis에 있는 모든 데이터를 snapshot.json에 저장해.
-    # 발표 때 "지금 저장하겠습니다"라고 하고 누르면 돼.
+    # 스냅샷을 저장하고 자동 저장도 다시 활성화해.
+    # /snapshot/clear로 비활성화된 상태에서도 [지금 저장]을 누르면 다시 활성화돼.
     try:
+        enable_snapshot()
         save_snapshot(store)
         key_count = len(store.keys())
         return {"success": True, "message": f"스냅샷 저장 완료 ({key_count}개 키)"}
@@ -493,10 +494,11 @@ async def snapshot_save():
 
 @router.delete("/snapshot/clear")
 async def snapshot_clear():
-    # snapshot.json 파일을 삭제해.
-    # 삭제 후 서버를 재시작하면 데이터가 없는 상태로 시작돼.
-    # "스냅샷 없이 재시작하면 데이터가 사라진다"는 걸 보여줄 때 사용해.
+    # snapshot.json 파일을 삭제하고
+    # 서버 종료 시 자동 저장도 비활성화해.
+    # 이렇게 해야 서버를 껐다 켜도 데이터가 없는 상태로 시작해.
     try:
+        disable_snapshot()
         if SNAPSHOT_PATH.exists():
             SNAPSHOT_PATH.unlink()
             return {"success": True, "message": "스냅샷 삭제 완료 — 재시작 시 데이터 없음"}
