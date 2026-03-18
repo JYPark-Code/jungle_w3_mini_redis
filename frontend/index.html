@@ -159,23 +159,42 @@
     .last-request-status { font-size: 1.2rem; font-weight: 600; }
     .last-request-time   { font-size: 1.8rem; font-weight: 700; color: #1e88e5; }
 
-    /* 바 차트 (벤치마크) */
-    .bar-container {
-      background: #f0f0f0; border-radius: 6px;
-      height: 28px; margin: 8px 0; overflow: hidden; position: relative;
+    /* 바 차트 (벤치마크) — 수치는 바 오른쪽 밖에 표시 */
+    .bar-row {
+      display: flex; align-items: center;
+      margin: 10px 0; gap: 12px;
+    }
+    .bar-label {
+      width: 120px; font-size: 0.9rem;
+      font-weight: 600; flex-shrink: 0;
+    }
+    .bar-track {
+      flex: 1; background: #f0f0f0; border-radius: 6px;
+      height: 28px; overflow: visible; position: relative;
     }
     .bar-fill {
       height: 100%; border-radius: 6px;
-      display: flex; align-items: center;
-      padding-left: 10px; font-size: 1rem; font-weight: 600;
-      color: white; transition: width 0.6s ease;
-      min-width: 4px;
+      min-width: 4px; transition: width 0.6s ease;
+    }
+    .bar-value {
+      width: 80px; font-size: 1.1rem; font-weight: 700;
+      flex-shrink: 0; text-align: right;
     }
     .bar-db   { background: #e53935; }
     .bar-mini { background: #1e88e5; }
     .bar-real { background: #43a047; }
-    .bar-item-label { font-size: 0.9rem; color: #555; font-weight: 600; margin-bottom: 2px; }
-    .bar-item-value { font-size: 0.85rem; color: #888; margin-top: 2px; }
+
+    /* 응답시간 카드 */
+    .metric-cards { display: flex; gap: 12px; margin: 12px 0; }
+    .metric-card {
+      flex: 1; border-radius: 8px; padding: 14px; text-align: center;
+    }
+    .metric-card-db   { background: #ffebee; border: 2px solid #e53935; }
+    .metric-card-mini { background: #e3f2fd; border: 2px solid #1e88e5; }
+    .metric-card-real { background: #e8f5e9; border: 2px solid #43a047; }
+    .metric-card-title { font-size: 0.85rem; color: #666; margin-bottom: 6px; }
+    .metric-card-value { font-size: 2rem; font-weight: 700; line-height: 1; }
+    .metric-card-unit  { font-size: 0.9rem; color: #888; }
 
     /* Cache HIT/MISS 박스 */
     .cache-stat-box { display: flex; gap: 12px; margin: 12px 0; }
@@ -270,26 +289,44 @@
     <div class="dashboard-section">
       <div class="panel-section-title">응답 시간 비교</div>
       <div id="response-time-chart">
-        <div>
-          <div class="bar-item-label">DB 직접 조회</div>
-          <div class="bar-container">
+        <div class="bar-row">
+          <div class="bar-label">DB 직접</div>
+          <div class="bar-track">
             <div class="bar-fill bar-db" id="bar-db" style="width:0;"></div>
           </div>
-          <div class="bar-item-value" id="bar-db-val">- ms</div>
+          <div class="bar-value" id="bar-db-val">- ms</div>
         </div>
-        <div>
-          <div class="bar-item-label">Mini Redis 캐시</div>
-          <div class="bar-container">
+        <div class="bar-row">
+          <div class="bar-label">Mini Redis</div>
+          <div class="bar-track">
             <div class="bar-fill bar-mini" id="bar-mini" style="width:0;"></div>
           </div>
-          <div class="bar-item-value" id="bar-mini-val">- ms</div>
+          <div class="bar-value" id="bar-mini-val">- ms</div>
         </div>
-        <div>
-          <div class="bar-item-label">실제 Redis (Docker)</div>
-          <div class="bar-container">
+        <div class="bar-row">
+          <div class="bar-label">실제 Redis</div>
+          <div class="bar-track">
             <div class="bar-fill bar-real" id="bar-real" style="width:0;"></div>
           </div>
-          <div class="bar-item-value" id="bar-real-val">- ms (13번에서 추가)</div>
+          <div class="bar-value" id="bar-real-val">- ms</div>
+        </div>
+      </div>
+      <!-- 응답시간 카드 (FIX 2) -->
+      <div class="metric-cards">
+        <div class="metric-card metric-card-db">
+          <div class="metric-card-title">DB 직접 조회</div>
+          <div class="metric-card-value" id="cardDbMs">-</div>
+          <div class="metric-card-unit">ms</div>
+        </div>
+        <div class="metric-card metric-card-mini">
+          <div class="metric-card-title">Mini Redis</div>
+          <div class="metric-card-value" id="cardMiniMs">-</div>
+          <div class="metric-card-unit">ms</div>
+        </div>
+        <div class="metric-card metric-card-real">
+          <div class="metric-card-title">실제 Redis</div>
+          <div class="metric-card-value" id="cardRealMs">-</div>
+          <div class="metric-card-unit">ms</div>
         </div>
       </div>
       <div id="speedup-display"></div>
@@ -875,37 +912,31 @@ async function runBenchmark() {
 }
 
 function updateBenchmarkChart(data) {
-  // 벤치마크 결과를 바 차트로 표시하는 함수야.
-  // DB 조회 시간과 Mini Redis 시간을 비교해서 바 길이를 퍼센트로 계산해.
-  // CSS width로 구현하니까 Canvas 같은 건 필요 없어.
-  // 바 안에 수치를 표시하고, 채워지는 애니메이션도 동작해.
-  const max = Math.max(data.db_only_ms, data.mini_redis_ms, 1);
+  // 벤치마크 결과를 바 차트 + 카드로 표시하는 함수야.
+  // 바 차트: 수치는 바 오른쪽 밖에 표시해서 잘리지 않아.
+  // 카드: DB / Mini Redis / 실제 Redis 수치를 크게 보여줘.
+  const max = Math.max(data.db_only_ms, data.mini_redis_ms, data.real_redis_ms || 1);
 
-  // 응답 시간 비교 바 차트 업데이트
-  const barDb = document.getElementById('bar-db');
-  const barMini = document.getElementById('bar-mini');
-  const barReal = document.getElementById('bar-real');
-
-  const dbPct = Math.max((data.db_only_ms / max * 100), 2);
-  const miniPct = Math.max((data.mini_redis_ms / max * 100), 2);
-
-  barDb.style.width = dbPct + '%';
-  barDb.textContent = data.db_only_ms + ' ms';
-  barMini.style.width = miniPct + '%';
-  barMini.textContent = data.mini_redis_ms + ' ms';
-
+  // 바 차트 업데이트 (수치는 .bar-value에 표시)
+  document.getElementById('bar-db').style.width = (data.db_only_ms / max * 100) + '%';
+  document.getElementById('bar-mini').style.width = Math.max((data.mini_redis_ms / max * 100), 2) + '%';
   document.getElementById('bar-db-val').textContent = data.db_only_ms + ' ms';
   document.getElementById('bar-mini-val').textContent = data.mini_redis_ms + ' ms';
 
   // 실제 Redis는 13번에서 채움
   if (data.real_redis_ms !== null) {
-    const realPct = Math.max((data.real_redis_ms / max * 100), 2);
-    barReal.style.width = realPct + '%';
-    barReal.textContent = data.real_redis_ms + ' ms';
+    document.getElementById('bar-real').style.width = Math.max((data.real_redis_ms / max * 100), 2) + '%';
     document.getElementById('bar-real-val').textContent = data.real_redis_ms + ' ms';
   } else {
-    barReal.style.width = '0%';
-    document.getElementById('bar-real-val').textContent = '- ms (13번에서 추가)';
+    document.getElementById('bar-real').style.width = '0%';
+    document.getElementById('bar-real-val').textContent = '- ms';
+  }
+
+  // 카드 수치 업데이트
+  document.getElementById('cardDbMs').textContent = data.db_only_ms;
+  document.getElementById('cardMiniMs').textContent = data.mini_redis_ms;
+  if (data.real_redis_ms !== null) {
+    document.getElementById('cardRealMs').textContent = data.real_redis_ms;
   }
 
   // speedup 배지 표시
@@ -916,17 +947,7 @@ function updateBenchmarkChart(data) {
   const resultDiv = document.getElementById('benchmark-result');
   resultDiv.innerHTML = `
     <div style="font-size:1rem;color:#555;">
-      <div>반복 횟수: <strong>${data.iterations}회</strong></div>
-      <div style="margin-top:4px;">
-        <span class="metric-label">DB 직접</span>
-        <span class="metric-value" style="color:#e53935;">${data.db_only_ms}</span>
-        <span class="metric-unit">ms</span>
-      </div>
-      <div style="margin-top:4px;">
-        <span class="metric-label">Mini Redis</span>
-        <span class="metric-value" style="color:#1e88e5;">${data.mini_redis_ms}</span>
-        <span class="metric-unit">ms</span>
-      </div>
+      반복 횟수: <strong>${data.iterations}회</strong>
     </div>
   `;
 }
