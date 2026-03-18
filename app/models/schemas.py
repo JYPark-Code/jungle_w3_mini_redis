@@ -23,6 +23,15 @@ class SetRequest(BaseModel):
     ttl: int | None = None  # 만료 시간(초). None이면 영구 저장
 
 
+class SetNxRequest(BaseModel):
+    # 키가 없을 때만 저장할 때 보내는 데이터 형태야. (Set if Not eXists)
+    # 좌석 예약처럼 "먼저 온 1명만 성공"해야 할 때 사용해.
+    # SetRequest와 같은 필드지만, 동작이 다르기 때문에 별도 모델로 분리했어.
+    key: str                    # 저장할 키 이름
+    value: str                  # 저장할 값
+    ttl: int | None = None      # 만료 시간(초). None이면 영구 저장
+
+
 class ExpireRequest(BaseModel):
     # 이미 저장된 키에 만료 시간을 설정할 때 보내는 데이터 형태야.
     # key는 만료 시간을 설정할 대상, ttl은 몇 초 후에 사라질지야.
@@ -62,3 +71,10 @@ class MessageResponse(BaseModel):
     # 단순한 성공/실패 메시지를 돌려주는 응답이야.
     # 예: "OK", "삭제 완료", "키를 찾을 수 없습니다" 등
     message: str  # 결과 메시지
+
+
+class SetNxResponse(BaseModel):
+    # set_nx 요청의 응답이야.
+    # success가 True면 저장(예약) 성공, False면 이미 누군가 먼저 저장한 것이야.
+    success: bool  # 저장 성공 여부
+    message: str   # 결과 메시지 (예: "예약 성공", "이미 예약된 좌석입니다")
