@@ -12,6 +12,7 @@ from time import time
 from fastapi import APIRouter, HTTPException
 from app.core.store import store
 from app.core.database import get_trains as get_trains_from_db
+from app.core.redis_client import redis_set, redis_get, redis_delete, redis_ping
 from app.models.schemas import (
     SetRequest,
     SetNxRequest,
@@ -179,6 +180,15 @@ async def get_ttl(key: str):
 # ══════════════════════════════════════════════
 
 
+@router.get("/redis/status")
+async def redis_status():
+    """
+    실제 Redis 연결 상태를 확인하는 엔드포인트야.
+    발표 전에 Docker Redis가 켜져 있는지 확인할 때 사용해.
+    """
+    return {"available": redis_ping()}
+
+
 @router.get("/trains")
 async def get_trains(from_station: str, to_station: str):
     """
@@ -252,15 +262,29 @@ async def benchmark_trains(n: int = 100, from_station: str = "서울", to_statio
             result = json.loads(cached_value)
     cache_elapsed = int((time_module.time() - cache_start) * 1000)
 
-    # speedup이 0으로 나오는 걸 방지하기 위해 최소값 1로 설정
-    speedup = round(db_elapsed / max(cache_elapsed, 1), 1)
+    # === 3. 실제 Redis 캐시 n번 측정 ===
+    # Docker Redis가 켜져 있으면 실제 Redis로도 같은 테스트를 해.
+    # Mini Redis와 실제 Redis의 속도 차이를 비교할 수 있어.
+    real_elapsed = None
+    if redis_ping():
+        redis_delete(cache_key)
+        real_start = time_module.time()
+        for _ in range(n):
+            cached_value = redis_get(cache_key)
+            if cached_value is None:
+                result = get_trains_from_db(from_station, to_station)
+                redis_set(cache_key, json.dumps(result, ensure_ascii=False), ttl=300)
+            else:
+                result = json.loads(cached_value)
+        real_elapsed = int((time_module.time() - real_start) * 1000)
 
     return {
         "iterations": n,
         "db_only_ms": db_elapsed,
         "mini_redis_ms": cache_elapsed,
-        "real_redis_ms": None,  # 13번에서 채움
-        "speedup": speedup
+        "real_redis_ms": real_elapsed,
+        "speedup_mini": round(db_elapsed / max(cache_elapsed, 1), 1),
+        "speedup_real": round(db_elapsed / max(real_elapsed, 1), 1) if real_elapsed else None
     }
 
 
