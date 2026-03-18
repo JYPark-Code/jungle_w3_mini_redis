@@ -466,6 +466,49 @@
         (동시 예약 시도 결과가 여기 표시됨)
       </div>
     </div>
+
+    <!-- 스냅샷 섹션 -->
+    <div class="dashboard-section">
+      <div class="panel-section-title">💾 데이터 영속성 (Persistence)</div>
+
+      <!-- 스냅샷 상태 표시 -->
+      <div id="snapshotStatus" style="
+        background: #f5f5f5;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+        font-size: 0.9rem;
+      ">
+        <div style="color: #888;">상태 확인 중...</div>
+      </div>
+
+      <!-- 버튼 두 개 -->
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+        <button onclick="saveSnapshot()"
+                style="flex: 1; padding: 10px; background: #1e88e5;
+                       color: white; border: none; border-radius: 6px;
+                       font-size: 0.9rem; cursor: pointer; font-weight: 600;">
+          💾 지금 저장
+        </button>
+        <button onclick="clearSnapshot()"
+                style="flex: 1; padding: 10px; background: #e53935;
+                       color: white; border: none; border-radius: 6px;
+                       font-size: 0.9rem; cursor: pointer; font-weight: 600;">
+          🗑️ 스냅샷 삭제
+        </button>
+      </div>
+
+      <!-- 발표 안내 -->
+      <div style="background: #fff8e1; border-radius: 6px; padding: 10px; font-size: 0.82rem; color: #555;">
+        <div style="font-weight: 700; margin-bottom: 4px;">📋 시연 순서</div>
+        <div>1. 좌석 예약 후 [지금 저장]</div>
+        <div>2. 터미널에서 서버 종료 (Ctrl+C)</div>
+        <div>3. 서버 재시작 → 데이터 유지 확인 ✅</div>
+        <div style="margin-top: 4px; color: #e53935;">
+          4. [스냅샷 삭제] → 재시작 → 데이터 없음 ❌
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1558,10 +1601,90 @@ async function checkRedisStatus() {
   }
 }
 
+// ──────────────────────────────────────────────
+// 스냅샷 영속성 (Persistence)
+// ──────────────────────────────────────────────
+
+async function loadSnapshotStatus() {
+  // 스냅샷 파일 상태를 가져와서 패널에 표시해.
+  // 마지막 저장 시각과 저장된 키 수를 보여줘.
+  try {
+    const res = await fetch(`${API}/snapshot/status`);
+    const data = await res.json();
+    const el = document.getElementById('snapshotStatus');
+    if (!el) return;
+
+    if (data.exists) {
+      el.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <div style="font-weight: 600; color: #2e7d32;">✅ 스냅샷 존재</div>
+            <div style="font-size: 0.82rem; color: #666;">
+              저장된 키: <strong>${data.key_count}개</strong>
+            </div>
+            <div style="font-size: 0.78rem; color: #888;">
+              ${data.saved_at}
+            </div>
+          </div>
+          <div style="font-size: 2rem;">💾</div>
+        </div>
+      `;
+      el.style.background = '#e8f5e9';
+      el.style.border = '1px solid #43a047';
+    } else {
+      el.innerHTML = `
+        <div style="color: #c62828; font-weight: 600;">❌ 스냅샷 없음</div>
+        <div style="font-size: 0.82rem; color: #888;">
+          재시작 시 데이터가 사라집니다
+        </div>
+      `;
+      el.style.background = '#ffebee';
+      el.style.border = '1px solid #e53935';
+    }
+  } catch (e) {
+    // 서버 미연결 시 무시
+  }
+}
+
+async function saveSnapshot() {
+  // 지금 Mini Redis 데이터를 snapshot.json에 저장해.
+  // 발표 때 서버 종료 전에 누르면 돼.
+  try {
+    const res = await fetch(`${API}/snapshot/save`, { method: 'POST' });
+    const data = await res.json();
+
+    showToast(data.message);
+    await loadSnapshotStatus();
+
+    addCacheDetailLog(`💾 스냅샷 저장: ${data.message}`, 'info');
+  } catch (e) {
+    showToast('스냅샷 저장 실패');
+  }
+}
+
+async function clearSnapshot() {
+  // snapshot.json 파일을 삭제해.
+  // 삭제 후 서버를 재시작하면 빈 상태로 시작해.
+  if (!confirm('스냅샷을 삭제하면 재시작 시 데이터가 사라집니다.\n계속하시겠습니까?')) return;
+
+  try {
+    const res = await fetch(`${API}/snapshot/clear`, { method: 'DELETE' });
+    const data = await res.json();
+
+    showToast(data.message);
+    await loadSnapshotStatus();
+
+    addCacheDetailLog(`🗑️ 스냅샷 삭제: 재시작 시 데이터 없음`, 'miss');
+  } catch (e) {
+    showToast('스냅샷 삭제 실패');
+  }
+}
+
 // 페이지 로드 시 초기화
 updateDestOptions();
 checkRedisStatus();
 loadAllTrains();
+loadSnapshotStatus();
 </script>
 </body>
 </html>
