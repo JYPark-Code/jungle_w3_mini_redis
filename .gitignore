@@ -5,4 +5,5 @@ __pycache__/
 *.pyo
 .env
 snapshot.json
+trains.db
 /docs
