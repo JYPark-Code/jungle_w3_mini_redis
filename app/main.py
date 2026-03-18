@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import router
 from app.core.store import store
 from app.core.persistence import load_snapshot, save_snapshot, start_auto_snapshot
+from app.core.database import init_db
 
 
 # ──────────────────────────────────────────────
@@ -27,6 +28,8 @@ from app.core.persistence import load_snapshot, save_snapshot, start_auto_snapsh
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # === 서버 시작 시 실행 ===
+    # SQLite DB를 초기화해서 열차 데이터를 준비한다.
+    init_db()
     # 이전에 저장한 snapshot.json이 있으면 데이터를 복원한다.
     load_snapshot(store)
     # 60초마다 자동으로 스냅샷을 저장하는 백그라운드 스레드를 시작한다.
@@ -80,7 +83,7 @@ app.include_router(router)
 # ──────────────────────────────────────────────
 # frontend/ 폴더의 HTML 파일을 /front 경로로 접근할 수 있게 해줘.
 # 브라우저에서 http://localhost:8000/front/index.html 로 데모 화면을 볼 수 있어.
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 app.mount("/front", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
 
