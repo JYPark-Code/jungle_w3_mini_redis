@@ -1,80 +1,100 @@
-# Mini Redis
+# 🔴 Mini Redis
 
-> 해시 테이블을 직접 구현하여 만든 인메모리 키-값 저장소 (REST API)
+> Redis의 핵심 원리를 Python으로 직접 구현한 인메모리 키-값 저장소
 
-Redis의 핵심 원리(해시 테이블, TTL, 동시성 제어)를 Python dict 없이 밑바닥부터 구현하여,
-자료구조의 동작 방식을 깊이 이해하기 위해 만든 프로젝트입니다.
-
----
-
-## 기술 스택
-
-| 항목 | 내용 |
-|------|------|
-| Backend | FastAPI + Uvicorn |
-| 저장소 | 직접 구현한 HashTable (Python dict 미사용) |
-| 동시성 | threading.Lock |
-| 만료 처리 | Lazy Deletion |
-| 캐싱 전략 | Cache Aside Pattern |
-| 영속성 | JSON 스냅샷 (snapshot.json) |
-| 테스트 | pytest |
-| 프론트엔드 | HTML + Vanilla JS |
-| 터널링 | Cloudflare Tunnel |
+Python dict를 사용하지 않고 **배열 + 체이닝 HashTable**을 직접 구현하여
+Redis의 핵심 동작 원리(TTL, Lazy Deletion, 동시성 제어, 캐싱, 영속성)를 학습하고 시연하는 프로젝트입니다.
 
 ---
 
-## 아키텍처
+## 🎯 핵심 구현 포인트
+
+| 포인트 | 구현 방식 | 의미 |
+|--------|----------|------|
+| 🗃️ 자료구조 | 배열 + 체이닝 HashTable (256 buckets) | Python dict 미사용, 직접 구현 |
+| ⏰ TTL 만료 | Lazy Deletion | 조회 시점에 만료 확인 후 삭제 |
+| 🔒 동시성 | threading.Lock + setnx | 1명만 예약 성공 보장 |
+| 🗄️ 캐싱 전략 | Cache Aside Pattern | DB 부하 감소 |
+| 💾 영속성 | JSON 스냅샷 (자동/수동) | 서버 재시작 후 데이터 복구 |
+
+---
+
+## 🛠️ 기술 스택
+
+```
+Backend      FastAPI + Uvicorn
+Database     SQLite (파일 기반 디스크 I/O)
+Cache        직접 구현한 Mini Redis (HashTable)
+Real Redis   Docker Redis (성능 비교용)
+Test         pytest (43개 전체 통과)
+Frontend     Vanilla HTML/JS (단일 파일)
+Tunnel       Cloudflare Tunnel (외부 접속)
+```
+
+---
+
+## 🏗️ 아키텍처
 
 ### HashTable 구조
 
-배열 + 체이닝(Chaining) 방식으로 충돌 처리.
-두 개의 HashTable 인스턴스로 data / TTL 분리 관리.
+```
+buckets = [[], [], [], ...]  ← 256개 배열
+              ↓
+         체이닝으로 충돌 처리
+         [(key1, val1), (key2, val2)]
+```
 
-```
-버킷 배열 (크기: 256)
-┌───────────┐
-│ bucket[0] │ → [(key_a, val_a), (key_b, val_b)]  ← 체이닝으로 충돌 처리
-│ bucket[1] │ → [(key_c, val_c)]
-│ bucket[2] │ → []
-│    ...    │
-│bucket[255]│ → [(key_z, val_z)]
-└───────────┘
-```
+### 두 개의 HashTable로 데이터/TTL 분리
 
 ```python
-hash_table = HashTable()   # key → value
-expire_at  = HashTable()   # key → 만료 timestamp
+hash_table = HashTable()   # key → value       (데이터 저장)
+expire_at  = HashTable()   # key → timestamp   (만료 시각 저장)
 ```
 
-### TTL 만료 처리 — Lazy Deletion
+### Cache Aside Pattern
 
-- 별도 스케줄러 없이 조회 시점에만 만료 여부 확인
-- 만료된 키는 조회 즉시 삭제 후 None 반환
+```
+조회 요청
+    ↓
+Mini Redis 확인
+    ├── HIT  → 즉시 반환 (DB 조회 없음)
+    └── MISS → DB 조회 → Mini Redis 저장 → 반환
+```
+
+### Lazy Deletion
+
+```
+GET 호출
+    ↓
+expire_at 확인
+    ├── 만료 안 됨 → 값 반환
+    └── 만료됨 → 키 삭제 → None 반환 (TTL = -2)
+```
 
 ### 동시성 제어
 
-- threading.Lock으로 모든 쓰기 연산 보호 (set, delete, expire, flush)
-- 동시에 같은 좌석을 예약하려 해도 1명만 성공
-
-### 캐싱 전략 — Cache Aside Pattern
-
 ```
-1. 캐시(Mini Redis) 먼저 확인
-2. 캐시 미스 → 외부 API 호출
-3. 결과를 캐시에 저장
-4. 다음 요청부터 캐시에서 반환
+5명이 동시에 같은 좌석 예약 시도
+    ↓
+threading.Lock → 1명만 setnx 성공
+    ↓
+나머지 4명 → "이미 예약됨"
 ```
 
-### 영속성 — JSON 스냅샷
+### 영속성 (JSON 스냅샷)
 
-- 서버 시작 시 snapshot.json 자동 복원
-- 60초마다 백그라운드 자동 저장 (daemon thread)
-- 서버 종료 시 마지막 스냅샷 저장
-- 만료된 키는 복원 시 제외
+```
+서버 실행 중
+    ├── 60초마다 snapshot.json 자동 저장
+    └── 서버 종료 시 마지막 저장
+
+서버 재시작
+    └── snapshot.json 복원 (만료 키 제외)
+```
 
 ---
 
-## API 명세
+## 📡 API 명세
 
 | Method | Endpoint | 설명 |
 |--------|----------|------|
@@ -86,52 +106,129 @@ expire_at  = HashTable()   # key → 만료 timestamp
 | DELETE | `/flush` | 전체 초기화 |
 | POST | `/expire` | TTL 설정 |
 | GET | `/ttl/{key}` | 남은 만료 시간 |
-| GET | `/health` | 서버 상태 |
+| POST | `/setnx` | 없을 때만 저장 (동시성 핵심) |
+| POST | `/hold` | 임시 선점 (TTL 5초) |
+| POST | `/confirm` | 예약 확정 |
+| GET | `/trains/cached` | Cache Aside 열차 조회 |
+| GET | `/benchmark/trains` | DB vs Mini Redis 성능 비교 |
+| GET | `/benchmark/redis-compare` | Mini Redis vs 실제 Redis 비교 |
+| POST | `/benchmark/concurrent` | 동시 예약 시뮬레이션 |
+| POST | `/snapshot/save` | 수동 스냅샷 저장 |
+| DELETE | `/snapshot/clear` | 스냅샷 삭제 |
+| GET | `/snapshot/status` | 스냅샷 상태 확인 |
 
 ---
 
-## 실행 방법
+## 🚀 실행 방법
 
 ```bash
+# 패키지 설치
 pip install -r requirements.txt
+
+# 서버 실행
 uvicorn app.main:app --reload
-```
 
-외부 접속 (Cloudflare Tunnel):
-```bash
+# 외부 접속 (Cloudflare Tunnel)
 cloudflared tunnel --url http://localhost:8000
-```
 
-브라우저에서 `http://localhost:8000/docs` 접속 시 Swagger UI 확인 가능
+# Docker Redis (비교용)
+docker run -d --name redis-test -p 6379:6379 redis:latest
 
----
-
-## 테스트 실행
-
-```bash
+# 테스트 실행
 pytest tests/ -v
 ```
 
 ---
 
-## 핵심 구현 포인트 요약
+## ✅ 테스트 결과
 
-| 포인트 | 구현 방식 |
-|--------|----------|
-| 해시 충돌 처리 | 체이닝(Chaining) |
-| TTL 만료 | Lazy Deletion |
-| 동시성 제어 | threading.Lock |
-| 캐싱 전략 | Cache Aside Pattern |
-| 데이터 영속성 | JSON 스냅샷 자동 저장/복원 |
+```
+총 43개 테스트 전체 통과
+
+단위 테스트  (11개): HashTable, MiniRedis 핵심 로직
+통합 테스트  (32개): 전체 API 엔드포인트
+
+커버 범위:
+✅ CRUD          ✅ TTL/만료
+✅ SETNX         ✅ 임시 선점
+✅ Cache Aside   ✅ 동시성
+✅ 벤치마크      ✅ 스냅샷
+✅ 헬스체크
+```
 
 ---
 
-## 성능 비교 결과
+## 📊 성능 비교 결과
 
-| 시나리오 | 응답 시간 |
-|----------|----------|
-| 외부 API 직접 호출 100회 | ___ ms |
-| Mini Redis 캐시 사용 | ___ ms |
-| 실제 Redis 캐시 사용 | ___ ms |
+### DB vs 캐시 비교 (1,000회 반복)
 
-> 벤치마크 실행 후 실제 수치로 업데이트 예정
+| 시나리오 | 응답 시간 | 비고 |
+|----------|---------|------|
+| DB 직접 조회 | 140 ms | SQLite 디스크 I/O |
+| Mini Redis 캐시 | 4 ms | 인메모리 직접 호출 |
+| **속도 향상** | **35배** | |
+
+### Mini Redis vs 실제 Redis (1,000회 set+get)
+
+| | 응답 시간 | ops/sec |
+|---|---------|---------|
+| Mini Redis | 1.11 ms | 1,801,802 |
+| 실제 Redis | 558.96 ms | 3,578 |
+
+**🔍 로컬 환경에서 Mini Redis가 빠른 이유:**
+- Mini Redis: 같은 프로세스 내 직접 함수 호출
+- 실제 Redis: Docker 네트워크 → TCP 소켓 왕복 오버헤드
+
+**🚀 프로덕션에서 실제 Redis가 강력한 이유:**
+- C 언어로 구현된 최적화된 자료구조
+- 단일 스레드 이벤트 루프 (GIL 없음)
+- 전용 서버 + 최적화된 네트워크
+- 메모리 최적화 (jemalloc 사용)
+
+---
+
+## 🎬 데모 시연 순서 (발표자 참고)
+
+```
+① 열차 노선 조회
+   → Cache MISS 확인 (오른쪽 패널 로그)
+   → 재조회 → Cache HIT 확인
+
+② 좌석 임시 선점
+   → TTL 5초 카운트다운
+   → TTL 로그: 5→4→3→2→1→-2
+   → Lazy Deletion 발동 확인
+
+③ 동시 예약 시뮬레이션
+   → 좌석 우클릭 선택 → 인원 설정 → 동시 시도
+   → 1명만 성공 확인
+
+④ 벤치마크 실행
+   → DB vs Mini Redis 수치 비교
+   → Mini Redis vs 실제 Redis 비교
+
+⑤ 스냅샷 시연
+   → 좌석 예약 후 [지금 저장]
+   → 서버 종료 (Ctrl+C)
+   → 재시작 → 데이터 유지 확인
+```
+
+---
+
+## 💬 QnA 대비
+
+**Q. 해시 충돌을 어떻게 처리했나요?**
+배열 + 체이닝 방식. 같은 버킷에 `(key, value)` 리스트로 연결합니다.
+
+**Q. TTL 만료를 어떻게 처리했나요?**
+Lazy Deletion. 별도 스케줄러 없이 조회 시점에 만료 확인 후 삭제합니다.
+
+**Q. 동시성 문제를 어떻게 해결했나요?**
+`threading.Lock`으로 모든 쓰기 연산 보호. `setnx`로 중복 예약 방지합니다.
+
+**Q. 서버 다운 시 데이터는요?**
+60초마다 JSON 스냅샷 자동 저장. 재시작 시 자동 복원됩니다.
+
+**Q. 실제 Redis와 차이점은요?**
+Mini Redis는 HTTP/REST, 실제 Redis는 TCP/RESP 프로토콜.
+로컬에서는 Mini Redis가 빠르지만 프로덕션에서는 실제 Redis가 우위입니다.
